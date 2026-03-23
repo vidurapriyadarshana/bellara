@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PaymentMethod } from "@prisma/client";
+import { PaymentMethod, OrderStatus, PaymentStatus } from "@prisma/client";
 import { ORDER_CONFIG } from "@/constants/order";
 
 /**
@@ -140,3 +140,101 @@ export const uploadPaymentProofSchema = z.object({
 });
 
 export type UploadPaymentProofRequest = z.infer<typeof uploadPaymentProofSchema>;
+
+/**
+ * List orders filter validation (admin)
+ */
+export const listOrdersFilterSchema = z.object({
+  status: z
+    .enum([
+      OrderStatus.PENDING,
+      OrderStatus.CONFIRMED,
+      OrderStatus.PROCESSING,
+      OrderStatus.PACKAGED,
+      OrderStatus.SHIPPED,
+      OrderStatus.DELIVERED,
+      OrderStatus.CANCELLED,
+    ])
+    .optional(),
+  paymentMethod: z
+    .enum([PaymentMethod.CASH_ON_DELIVERY, PaymentMethod.BANK_TRANSFER])
+    .optional(),
+  paymentStatus: z
+    .enum([PaymentStatus.PENDING, PaymentStatus.PAID, PaymentStatus.FAILED, PaymentStatus.REFUNDED])
+    .optional(),
+  startDate: z
+    .string()
+    .datetime("Invalid date format. Expected ISO 8601 format")
+    .optional(),
+  endDate: z
+    .string()
+    .datetime("Invalid date format. Expected ISO 8601 format")
+    .optional(),
+  searchTerm: z
+    .string()
+    .trim()
+    .max(255, "Search term cannot exceed 255 characters")
+    .optional(),
+  page: z
+    .string()
+    .optional()
+    .default("1")
+    .transform((val) => parseInt(val, 10))
+    .refine((val) => !isNaN(val) && val >= ORDER_CONFIG.DEFAULT_PAGE, "Invalid page number"),
+  limit: z
+    .string()
+    .optional()
+    .default(ORDER_CONFIG.DEFAULT_LIMIT.toString())
+    .transform((val) => parseInt(val, 10))
+    .refine(
+      (val) => !isNaN(val) && val >= ORDER_CONFIG.MIN_LIMIT && val <= ORDER_CONFIG.MAX_LIMIT,
+      `Limit must be between ${ORDER_CONFIG.MIN_LIMIT} and ${ORDER_CONFIG.MAX_LIMIT}`
+    ),
+});
+
+export type ListOrdersFilterInput = z.infer<typeof listOrdersFilterSchema>;
+
+/**
+ * Update order status validation (admin)
+ */
+export const updateOrderStatusSchema = z.object({
+  status: z.enum([
+    OrderStatus.PENDING,
+    OrderStatus.CONFIRMED,
+    OrderStatus.PROCESSING,
+    OrderStatus.PACKAGED,
+    OrderStatus.SHIPPED,
+    OrderStatus.DELIVERED,
+    OrderStatus.CANCELLED,
+  ]),
+  note: z
+    .string()
+    .trim()
+    .max(1000, "Note cannot exceed 1000 characters")
+    .optional(),
+});
+
+export type UpdateOrderStatusInput = z.infer<typeof updateOrderStatusSchema>;
+
+/**
+ * Add tracking code validation (admin)
+ */
+export const addTrackingCodeSchema = z.object({
+  trackingCode: z
+    .string()
+    .trim()
+    .min(5, "Tracking code must be at least 5 characters")
+    .max(100, "Tracking code cannot exceed 100 characters"),
+  courierName: z
+    .string()
+    .trim()
+    .min(2, "Courier name must be at least 2 characters")
+    .max(100, "Courier name cannot exceed 100 characters"),
+  note: z
+    .string()
+    .trim()
+    .max(1000, "Note cannot exceed 1000 characters")
+    .optional(),
+});
+
+export type AddTrackingCodeInput = z.infer<typeof addTrackingCodeSchema>;

@@ -162,3 +162,88 @@ export interface PaymentProofMetadata {
   fileSize: number;
   mimeType: string;
 }
+
+/**
+ * List Orders Filter Query Parameters
+ */
+export interface ListOrdersFilters {
+  status?: OrderStatus;
+  paymentMethod?: PaymentMethod;
+  paymentStatus?: PaymentStatus;
+  startDate?: string; // ISO date string
+  endDate?: string; // ISO date string
+  searchTerm?: string; // Search in customer name or email
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * List Orders Response
+ */
+export interface ListOrdersResponse {
+  data: OrderSummaryResponse[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+/**
+ * Update Order Status Request DTO
+ */
+export interface UpdateOrderStatusRequest {
+  status: OrderStatus;
+  note?: string; // Optional admin note
+}
+
+/**
+ * Update Order Status Response
+ */
+export interface UpdateOrderStatusResponse {
+  id: string;
+  orderNumber: string;
+  previousStatus: OrderStatus;
+  newStatus: OrderStatus;
+  updatedAt: string;
+}
+
+/**
+ * Order Status History Entry
+ */
+export interface OrderStatusHistoryEntry {
+  id: string;
+  status: OrderStatus;
+  note: string | null;
+  createdAt: string;
+  adminName?: string; // Admin who made the change
+}
+
+/**
+ * Order Status History Response
+ */
+export interface OrderStatusHistoryResponse {
+  orderId: string;
+  orderNumber: string;
+  currentStatus: OrderStatus;
+  history: OrderStatusHistoryEntry[];
+}
+
+/**
+ * Add Tracking Code Request DTO
+ */
+export interface AddTrackingCodeRequest {
+  trackingCode: string;
+  courierName: string;
+  note?: string; // Optional admin note
+}
+
+/**
+ * Add Tracking Code Response
+ */
+export interface AddTrackingCodeResponse {
+  id: string;
+  orderNumber: string;
+  trackingCode: string;
+  courierName: string;
+  updatedAt: string;
+}
