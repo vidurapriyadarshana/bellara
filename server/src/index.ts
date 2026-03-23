@@ -8,6 +8,7 @@ import { initializeUploadDirectories, handleMulterError } from "./middleware/upl
 import { uploadConfig } from "./config/upload";
 import { notFoundHandler, errorHandler } from "./middleware/error";
 import adminRoutes from "./routes/admin";
+import publicRoutes from "./routes/public";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,7 +45,10 @@ app.get("/api", (req: Request, res: Response) => {
   res.json({ message: "Welcome to Bellara API" });
 });
 
-// Admin routes
+// Public routes (no auth required)
+app.use("/api", publicRoutes);
+
+// Admin routes (auth required)
 app.use("/api/admin", adminRoutes);
 
 // Multer error handling middleware
@@ -72,3 +76,5 @@ process.on("SIGTERM", async () => {
   await prisma.$disconnect();
   process.exit(0);
 });
+
+export default app;
