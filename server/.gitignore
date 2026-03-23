@@ -25,3 +25,14 @@ dist
 .env
 .env.local
 .env.*.local
+
+# Prisma
+/src/generated/prisma
+
+# Uploaded files (keep directory structure with .gitkeep)
+/assets/products/*
+!/assets/products/.gitkeep
+/assets/receipts/*
+!/assets/receipts/.gitkeep
+/assets/categories/*
+!/assets/categories/.gitkeep
