@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { OrderService } from "@/services/order.service";
-import { createOrderSchema, paginationSchema, uploadPaymentProofSchema } from "@/validators/order";
+import { createOrderSchema, paginationSchema, uploadPaymentProofSchema, listOrdersFilterSchema, updateOrderStatusSchema, addTrackingCodeSchema } from "@/validators/order";
 import { ORDER_MESSAGES, HTTP_STATUS, ORDER_CONFIG } from "@/constants/order";
 import type { CreateOrderRequest, UploadPaymentProofRequest } from "@/types/order";
 
@@ -89,13 +89,14 @@ class OrderController {
   /**
    * List all orders (admin only)
    * GET /api/admin/orders
+   * Supports filtering by status, payment method, payment status, date range, and search term
    */
   async listOrders(req: Request, res: Response): Promise<void> {
     try {
-      const validatedQuery = paginationSchema.parse(req.query);
-      const { page, limit } = validatedQuery;
+      const validatedQuery = listOrdersFilterSchema.parse(req.query);
+      const { page, limit, ...filters } = validatedQuery;
 
-      const result = await OrderService.listOrders(page, limit);
+      const result = await OrderService.listOrders(page, limit, filters);
 
       res.status(HTTP_STATUS.OK).json({
         success: true,
@@ -104,9 +105,18 @@ class OrderController {
       });
     } catch (error: any) {
       if (error.name === "ZodError") {
+        let errorMessage = ORDER_MESSAGES.INVALID_PAGINATION;
+
+        if (error.errors && error.errors.length > 0) {
+          const firstError = error.errors[0];
+          if (firstError?.message) {
+            errorMessage = firstError.message;
+          }
+        }
+
         res.status(HTTP_STATUS.BAD_REQUEST).json({
           success: false,
-          message: ORDER_MESSAGES.INVALID_PAGINATION,
+          message: errorMessage,
           errors: error.errors,
         });
         return;
@@ -115,6 +125,38 @@ class OrderController {
       res.status(HTTP_STATUS.INTERNAL_ERROR).json({
         success: false,
         message: error.message || ORDER_MESSAGES.FAILED_TO_LIST,
+      });
+    }
+  }
+
+  /**
+   * Get order details by ID (admin only)
+   * GET /api/admin/orders/:id
+   */
+  async getOrderById(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params as { id: string };
+
+      if (!id) {
+        res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          message: "Order ID is required",
+        });
+        return;
+      }
+
+      const order = await OrderService.getOrderById(id);
+
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: ORDER_MESSAGES.RETRIEVED_SUCCESS,
+        data: order,
+      });
+    } catch (error: any) {
+      const statusCode = error.statusCode || HTTP_STATUS.INTERNAL_ERROR;
+      res.status(statusCode).json({
+        success: false,
+        message: error.message || ORDER_MESSAGES.FAILED_TO_RETRIEVE,
       });
     }
   }
@@ -198,6 +240,159 @@ class OrderController {
       res.status(statusCode).json({
         success: false,
         message: error.message || ORDER_MESSAGES.FAILED_TO_UPLOAD_PAYMENT_PROOF,
+      });
+    }
+  }
+
+  /**
+   * Update order status (admin only)
+   * PATCH /api/admin/orders/:id/status
+   */
+  async updateOrderStatus(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params as { id: string };
+      const admin = (req as any).admin;
+
+      if (!id) {
+        res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          message: "Order ID is required",
+        });
+        return;
+      }
+
+      // Validate request body
+      const validatedData = updateOrderStatusSchema.parse(req.body);
+
+      // Update status
+      const result = await OrderService.updateOrderStatus(
+        id,
+        validatedData.status,
+        validatedData.note,
+        admin?.id
+      );
+
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: ORDER_MESSAGES.STATUS_UPDATED_SUCCESS,
+        data: result,
+      });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        let errorMessage = "Invalid status update request";
+
+        if (error.errors && error.errors.length > 0) {
+          const firstError = error.errors[0];
+          if (firstError?.message) {
+            errorMessage = firstError.message;
+          }
+        }
+
+        res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          message: errorMessage,
+          errors: error.errors,
+        });
+        return;
+      }
+
+      const statusCode = error.statusCode || HTTP_STATUS.INTERNAL_ERROR;
+      res.status(statusCode).json({
+        success: false,
+        message: error.message || ORDER_MESSAGES.FAILED_TO_UPDATE_STATUS,
+      });
+    }
+  }
+
+  /**
+   * Add tracking code to order (admin only)
+   * PATCH /api/admin/orders/:id/tracking
+   */
+  async addTrackingCode(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params as { id: string };
+      const admin = (req as any).admin;
+
+      if (!id) {
+        res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          message: "Order ID is required",
+        });
+        return;
+      }
+
+      // Validate request body
+      const validatedData = addTrackingCodeSchema.parse(req.body);
+
+      // Add tracking code
+      const result = await OrderService.addTrackingCode(
+        id,
+        validatedData.trackingCode,
+        validatedData.courierName,
+        validatedData.note,
+        admin?.id
+      );
+
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: ORDER_MESSAGES.TRACKING_UPDATED_SUCCESS,
+        data: result,
+      });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        let errorMessage = "Invalid tracking code request";
+
+        if (error.errors && error.errors.length > 0) {
+          const firstError = error.errors[0];
+          if (firstError?.message) {
+            errorMessage = firstError.message;
+          }
+        }
+
+        res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          message: errorMessage,
+          errors: error.errors,
+        });
+        return;
+      }
+
+      const statusCode = error.statusCode || HTTP_STATUS.INTERNAL_ERROR;
+      res.status(statusCode).json({
+        success: false,
+        message: error.message || "Failed to add tracking code",
+      });
+    }
+  }
+
+  /**
+   * Get order status history (admin only)
+   * GET /api/admin/orders/:id/history
+   */
+  async getOrderStatusHistory(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params as { id: string };
+
+      if (!id) {
+        res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          message: "Order ID is required",
+        });
+        return;
+      }
+
+      const history = await OrderService.getOrderStatusHistory(id);
+
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: "Order status history retrieved successfully",
+        data: history,
+      });
+    } catch (error: any) {
+      const statusCode = error.statusCode || HTTP_STATUS.INTERNAL_ERROR;
+      res.status(statusCode).json({
+        success: false,
+        message: error.message || "Failed to retrieve order status history",
       });
     }
   }
