@@ -1,0 +1,222 @@
+// Bellara E-Commerce Database Schema
+// Prisma Schema for MySQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+// ============================================
+// ADMIN
+// ============================================
+model Admin {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String   // bcrypt hashed
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  statusHistory OrderStatusHistory[]
+
+  @@map("admins")
+}
+
+// ============================================
+// CATEGORY
+// ============================================
+model Category {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  image     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  products Product[]
+
+  @@map("categories")
+}
+
+// ============================================
+// PRODUCT
+// ============================================
+model Product {
+  id            String   @id @default(uuid())
+  categoryId    String   @map("category_id")
+  name          String
+  slug          String   @unique
+  description   String   @db.Text
+  price         Decimal  @db.Decimal(10, 2)
+  originalPrice Decimal? @map("original_price") @db.Decimal(10, 2)
+  stock         Int      @default(0)
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  category   Category       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  images     ProductImage[]
+  orderItems OrderItem[]
+
+  @@index([categoryId])
+  @@index([isActive])
+  @@map("products")
+}
+
+// ============================================
+// PRODUCT_IMAGE
+// ============================================
+model ProductImage {
+  id        String   @id @default(uuid())
+  productId String   @map("product_id")
+  imagePath String   @map("image_path")
+  isPrimary Boolean  @default(false) @map("is_primary")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@map("product_images")
+}
+
+// ============================================
+// ORDER
+// ============================================
+model Order {
+  id          String      @id @default(uuid())
+  orderNumber String      @unique @map("order_number") // e.g., "BLR-20240315-001"
+  status      OrderStatus @default(PENDING)
+
+  // Customer Details
+  customerName  String @map("customer_name")
+  customerPhone String @map("customer_phone")
+  customerEmail String @map("customer_email")
+
+  // Shipping Address
+  shippingStreet   String @map("shipping_street")
+  shippingDistrict String @map("shipping_district")
+  shippingCity     String @map("shipping_city")
+  shippingCountry  String @default("Sri Lanka") @map("shipping_country")
+
+  // Order Totals
+  subtotal    Decimal @map("subtotal") @db.Decimal(10, 2)
+  shippingFee Decimal @map("shipping_fee") @db.Decimal(10, 2)
+  total       Decimal @db.Decimal(10, 2)
+
+  // Payment
+  paymentMethod PaymentMethod @map("payment_method")
+  paymentStatus PaymentStatus @default(PENDING) @map("payment_status")
+
+  // Tracking (added by admin)
+  trackingCode String? @map("tracking_code")
+  courierName  String? @map("courier_name")
+  notes        String? @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  items         OrderItem[]
+  paymentProofs PaymentProof[]
+  statusHistory OrderStatusHistory[]
+
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+// ============================================
+// ORDER_ITEM
+// ============================================
+model OrderItem {
+  id           String  @id @default(uuid())
+  orderId      String  @map("order_id")
+  productId    String  @map("product_id")
+  productName  String  @map("product_name") // Snapshot
+  productPrice Decimal @map("product_price") @db.Decimal(10, 2) // Snapshot
+  productImage String? @map("product_image") // Snapshot of primary image
+  quantity     Int
+  total        Decimal @db.Decimal(10, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+// ============================================
+// PAYMENT_PROOF
+// ============================================
+model PaymentProof {
+  id           String    @id @default(uuid())
+  orderId      String    @map("order_id")
+  imagePath    String    @map("image_path")
+  bankName     String?   @map("bank_name")
+  transferDate DateTime? @map("transfer_date")
+  amount       Decimal?  @db.Decimal(10, 2)
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("payment_proofs")
+}
+
+// ============================================
+// ORDER_STATUS_HISTORY
+// ============================================
+model OrderStatusHistory {
+  id        String      @id @default(uuid())
+  orderId   String      @map("order_id")
+  adminId   String?     @map("admin_id")
+  status    OrderStatus
+  note      String?
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  // Relations
+  order Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  admin Admin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([adminId])
+  @@map("order_status_history")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  PACKAGED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH_ON_DELIVERY
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
