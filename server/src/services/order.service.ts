@@ -9,6 +9,9 @@ import type {
   OrderSummaryResponse,
   PaymentProofResponse,
   UploadPaymentProofRequest,
+  UpdateOrderStatusResponse,
+  OrderStatusHistoryResponse,
+  AddTrackingCodeResponse,
 } from "@/types/order";
 import type { OrderStatus, PaymentMethod } from "@prisma/client";
 
@@ -277,14 +280,90 @@ export class OrderService {
   }
 
   /**
+   * Get order by ID (admin only)
+   * @param orderId - Order ID (UUID)
+   * @returns Full order details with items
+   */
+  static async getOrderById(orderId: string): Promise<OrderDetailResponse> {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        items: true,
+        statusHistory: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            status: true,
+            note: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      const error = new Error(ORDER_MESSAGES.ORDER_NOT_FOUND);
+      (error as any).statusCode = HTTP_STATUS.NOT_FOUND;
+      throw error;
+    }
+
+    return {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      customerName: order.customerName,
+      customerPhone: order.customerPhone,
+      customerEmail: order.customerEmail,
+      shippingStreet: order.shippingStreet,
+      shippingDistrict: order.shippingDistrict,
+      shippingCity: order.shippingCity,
+      shippingCountry: order.shippingCountry,
+      subtotal: Number(order.subtotal),
+      shippingFee: Number(order.shippingFee),
+      total: Number(order.total),
+      paymentMethod: order.paymentMethod,
+      paymentStatus: order.paymentStatus,
+      trackingCode: order.trackingCode,
+      courierName: order.courierName,
+      notes: order.notes,
+      items: order.items.map((item) => ({
+        id: item.id,
+        productId: item.productId,
+        productName: item.productName,
+        productPrice: Number(item.productPrice),
+        productImage: item.productImage,
+        quantity: item.quantity,
+        total: Number(item.total),
+        createdAt: item.createdAt.toISOString(),
+      })),
+      createdAt: order.createdAt.toISOString(),
+      updatedAt: order.updatedAt.toISOString(),
+    };
+  }
+
+  /**
    * List orders (admin only)
    * @param page - Page number
    * @param limit - Items per page
    * @returns Paginated orders list
    */
+   /**
+    * List orders with filtering and pagination (admin only)
+    * @param page - Page number for pagination
+    * @param limit - Items per page
+    * @param filters - Optional filters (status, paymentMethod, paymentStatus, date range, search term)
+    * @returns Paginated and filtered orders list
+    */
   static async listOrders(
     page: number,
-    limit: number
+    limit: number,
+    filters?: {
+      status?: OrderStatus;
+      paymentMethod?: PaymentMethod;
+      paymentStatus?: string;
+      startDate?: string;
+      endDate?: string;
+      searchTerm?: string;
+    }
   ): Promise<{
     data: OrderSummaryResponse[];
     total: number;
@@ -294,8 +373,44 @@ export class OrderService {
   }> {
     const skip = (page - 1) * limit;
 
+    // Build where clause for filtering
+    const where: any = {};
+
+    if (filters?.status) {
+      where.status = filters.status;
+    }
+
+    if (filters?.paymentMethod) {
+      where.paymentMethod = filters.paymentMethod;
+    }
+
+    if (filters?.paymentStatus) {
+      where.paymentStatus = filters.paymentStatus;
+    }
+
+    // Date range filtering
+    if (filters?.startDate || filters?.endDate) {
+      where.createdAt = {};
+      if (filters?.startDate) {
+        where.createdAt.gte = new Date(filters.startDate);
+      }
+      if (filters?.endDate) {
+        where.createdAt.lte = new Date(filters.endDate);
+      }
+    }
+
+    // Search term filtering (search in customer name or email)
+    if (filters?.searchTerm) {
+      where.OR = [
+        { customerName: { contains: filters.searchTerm } },
+        { customerEmail: { contains: filters.searchTerm } },
+        { orderNumber: { contains: filters.searchTerm } },
+      ];
+    }
+
     const [orders, total] = await Promise.all([
       prisma.order.findMany({
+        where,
         skip,
         take: limit,
         orderBy: { createdAt: "desc" },
@@ -313,7 +428,7 @@ export class OrderService {
           createdAt: true,
         },
       }),
-      prisma.order.count(),
+      prisma.order.count({ where }),
     ]);
 
     return {
@@ -412,6 +527,198 @@ export class OrderService {
       transferDate: paymentProof.transferDate?.toISOString() || null,
       amount: paymentProof.amount ? Number(paymentProof.amount) : null,
       createdAt: paymentProof.createdAt.toISOString(),
+    };
+  }
+
+  /**
+   * Update order status (admin only)
+   * @param orderId - Order ID
+   * @param newStatus - New status to set
+   * @param note - Optional admin note about the status change
+   * @param adminId - Admin ID making the change
+   * @returns Updated order status response
+   */
+  static async updateOrderStatus(
+    orderId: string,
+    newStatus: OrderStatus,
+    note?: string,
+    adminId?: string
+  ): Promise<UpdateOrderStatusResponse> {
+    // Get current order
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+      },
+    });
+
+    if (!order) {
+      const error = new Error(ORDER_MESSAGES.ORDER_NOT_FOUND);
+      (error as any).statusCode = HTTP_STATUS.NOT_FOUND;
+      throw error;
+    }
+
+    // Validate status transition
+    const validTransitions = (ORDER_CONFIG.STATUS_TRANSITIONS[order.status as OrderStatus] || []) as OrderStatus[];
+    if (!validTransitions.includes(newStatus)) {
+      const error = new Error(
+        `Cannot transition from ${order.status} to ${newStatus}. Valid transitions: ${validTransitions.join(", ") || "None (final state)"}`
+      );
+      (error as any).statusCode = HTTP_STATUS.UNPROCESSABLE_ENTITY;
+      throw error;
+    }
+
+    // Update order status and create history entry
+    const updatedOrder = await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        status: newStatus,
+        updatedAt: new Date(),
+        statusHistory: {
+          create: {
+            status: newStatus,
+            note: note || null,
+            adminId: adminId || null,
+          },
+        },
+      },
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        updatedAt: true,
+      },
+    });
+
+    return {
+      id: updatedOrder.id,
+      orderNumber: updatedOrder.orderNumber,
+      previousStatus: order.status,
+      newStatus: updatedOrder.status,
+      updatedAt: updatedOrder.updatedAt.toISOString(),
+    };
+  }
+
+  /**
+   * Add tracking code and courier information (admin only)
+   * @param orderId - Order ID
+   * @param trackingCode - Tracking code from courier
+   * @param courierName - Name of courier service
+   * @param note - Optional admin note
+   * @param adminId - Admin ID making the change
+   * @returns Updated order with tracking info
+   */
+  static async addTrackingCode(
+    orderId: string,
+    trackingCode: string,
+    courierName: string,
+    note?: string,
+    adminId?: string
+  ): Promise<AddTrackingCodeResponse> {
+    // Get current order
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+      },
+    });
+
+    if (!order) {
+      const error = new Error(ORDER_MESSAGES.ORDER_NOT_FOUND);
+      (error as any).statusCode = HTTP_STATUS.NOT_FOUND;
+      throw error;
+    }
+
+    // Update order with tracking info
+    const updateData: any = {
+      trackingCode,
+      courierName,
+      updatedAt: new Date(),
+    };
+
+    // Add status history entry only if note is provided
+    if (note) {
+      updateData.statusHistory = {
+        create: {
+          status: order.status,
+          note: `Tracking added: ${note}`,
+          adminId: adminId || null,
+        },
+      };
+    }
+
+    const updatedOrder = await prisma.order.update({
+      where: { id: orderId },
+      data: updateData,
+      select: {
+        id: true,
+        orderNumber: true,
+        trackingCode: true,
+        courierName: true,
+        updatedAt: true,
+      },
+    });
+
+    return {
+      id: updatedOrder.id,
+      orderNumber: updatedOrder.orderNumber,
+      trackingCode: updatedOrder.trackingCode || "",
+      courierName: updatedOrder.courierName || "",
+      updatedAt: updatedOrder.updatedAt.toISOString(),
+    };
+  }
+
+  /**
+   * Get order status history (admin only)
+   * @param orderId - Order ID
+   * @returns Order status history with all transitions
+   */
+  static async getOrderStatusHistory(orderId: string): Promise<OrderStatusHistoryResponse> {
+    // Get order
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        statusHistory: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true,
+            status: true,
+            note: true,
+            createdAt: true,
+            admin: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      const error = new Error(ORDER_MESSAGES.ORDER_NOT_FOUND);
+      (error as any).statusCode = HTTP_STATUS.NOT_FOUND;
+      throw error;
+    }
+
+    return {
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      currentStatus: order.status,
+      history: order.statusHistory.map((entry) => ({
+        id: entry.id,
+        status: entry.status,
+        note: entry.note,
+        createdAt: entry.createdAt.toISOString(),
+        adminName: entry.admin?.name,
+      })),
     };
   }
 }
